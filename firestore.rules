@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (optional)
+    //   - email: string (required, email format)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //
+    // Collection: closures
+    // Document ID: auto-generated
+    // Fields:
+    //   - date: timestamp (required)
+    //   - responsible: string (required, max 100 chars)
+    //   - systemAmount: number (required)
+    //   - systemBalance: number (required)
+    //   - physicalAmount: number (required)
+    //   - difference: number (required)
+    //   - notes: string (optional, max 1000 chars)
+    //   - status: string (required, enum: ['safe', 'transit', 'bank'])
+    //   - createdBy: string (required, UID)
+    //
+    // Collection: movements
+    // Document ID: auto-generated
+    // Fields:
+    //   - date: timestamp (required)
+    //   - type: string (required, enum: ['inflow', 'outflow', 'transfer'])
+    //   - category: string (optional, max 100 chars)
+    //   - amount: number (required, positive)
+    //   - description: string (required, max 500 chars)
+    //   - createdBy: string (required, UID)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "noop1226@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             hasOnlyAllowedFields(['uid', 'displayName', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'user'];
+    }
+
+    function isValidClosure(data) {
+      return hasRequiredFields(['date', 'responsible', 'systemAmount', 'physicalAmount', 'difference', 'status', 'createdBy']) &&
+             hasOnlyAllowedFields(['id', 'date', 'responsible', 'systemAmount', 'systemBalance', 'physicalAmount', 'difference', 'notes', 'status', 'createdBy']) &&
+             data.date is timestamp &&
+             data.responsible is string && data.responsible.size() <= 100 &&
+             data.systemAmount is number &&
+             data.physicalAmount is number &&
+             data.difference is number &&
+             data.status in ['safe', 'transit', 'bank'] &&
+             data.createdBy is string &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000));
+    }
+
+    function isValidMovement(data) {
+      return hasRequiredFields(['date', 'type', 'amount', 'description', 'createdBy']) &&
+             hasOnlyAllowedFields(['id', 'date', 'type', 'category', 'amount', 'description', 'createdBy']) &&
+             data.date is timestamp &&
+             data.type in ['inflow', 'outflow', 'transfer'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.description is string && data.description.size() <= 500 &&
+             data.createdBy is string &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    }
+
+    match /closures/{closureId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidClosure(request.resource.data) && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuthenticated() && isValidClosure(request.resource.data) && (isAdmin() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    match /movements/{movementId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMovement(request.resource.data) && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuthenticated() && isValidMovement(request.resource.data) && (isAdmin() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
