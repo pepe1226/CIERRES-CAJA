@@ -146,12 +146,16 @@ function AppContent() {
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+  const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    try {
       if (firebaseUser) {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        const userDoc = await getDoc(userRef);
+
         if (userDoc.exists()) {
           const userData = userDoc.data() as UserProfile & { categories?: string[] };
           setUser(userData);
+
           if (userData.categories) {
             setCategories(userData.categories);
           }
@@ -161,18 +165,25 @@ function AppContent() {
             email: firebaseUser.email || '',
             displayName: firebaseUser.displayName || '',
             role: firebaseUser.email === 'noop1226@gmail.com' ? 'admin' : 'user',
-            categories: ['Sueldos', 'Arriendo', 'Luz', 'Agua', 'Internet', 'Insumos', 'Otros']
+            categories: ['Sueldos', 'Arriendo', 'Luz', 'Agua', 'Internet', 'Insumos', 'Otros'],
           };
-          await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
+
+          await setDoc(userRef, newUser);
           setUser(newUser);
         }
       } else {
         setUser(null);
       }
+    } catch (err) {
+      console.error('Error en onAuthStateChanged:', err);
+      setUser(null);
+    } finally {
       setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+    }
+  });
+
+  return () => unsubscribe();
+}, []);
 
   // Firestore Listeners
   useEffect(() => {
